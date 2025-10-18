@@ -39,6 +39,8 @@ public class TaskController {
     /**
      * Fetches all tasks with summary information.
      *
+     * @param page the page number (0-based)
+     * @param size the number of items per page
      * @return a Flux emitting TaskSummaryResponse objects
      */
     @GetMapping

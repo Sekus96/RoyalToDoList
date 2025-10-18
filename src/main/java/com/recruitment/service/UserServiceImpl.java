@@ -43,6 +43,8 @@ public class UserServiceImpl implements UserService {
     /**
      * Fetches all users.
      *
+     * @param page the page number (0-based)
+     * @param size the number of items per page
      * @return a Flux emitting UserResponse objects
      */
     @Override
@@ -62,7 +64,7 @@ public class UserServiceImpl implements UserService {
     @Override
     public Mono<UserResponse> getUserById(Long id) {
         return userRepository.findById(id)
-                .switchIfEmpty(Mono.error(new UserNotFoundException("user with id: " + id + " was not found.")))
+                .switchIfEmpty(Mono.error(new UserNotFoundException("User with id: " + id + " was not found.")))
                 .map(userMapper::toResponse);
     }
 

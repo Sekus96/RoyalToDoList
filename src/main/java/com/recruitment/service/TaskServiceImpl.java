@@ -61,6 +61,8 @@ public class TaskServiceImpl implements TaskService {
     /**
      * Returns all tasks in the system as summary DTOs.
      *
+     * @param page the page number (0-based)
+     * @param size the number of items per page
      * @return a Flux of TaskSummaryResponse
      */
     @Override
@@ -93,20 +95,23 @@ public class TaskServiceImpl implements TaskService {
      * @throws TaskNotFoundException    if the task does not exist
      * @throws InvalidTaskDataException if any required field is missing
      * @throws StatusNotFoundException  if status value is invalid
+     * @throws UserNotFoundException  if the user does not exist
      */
     @Override
     public Mono<TaskResponse> updateTask(TaskUpdateRequest taskUpdate, Long id) {
         return taskRepository.findById(id)
                 .switchIfEmpty(Mono.error(new TaskNotFoundException("Task with id: " + id + " was not found.")))
-                .flatMap(existingTask -> {
-                    TaskStatus status = validateTaskUpdate(taskUpdate);
-                    existingTask.setTitle(taskUpdate.getTitle());
-                    existingTask.setDescription(taskUpdate.getDescription());
-                    existingTask.setStatus(status);
-                    return taskRepository.save(existingTask)
-                            .map(taskMapper::toResponse);
-                });
-
+                .flatMap(existingTask ->
+                        updateTaskFields(taskUpdate)
+                                .flatMap(status -> {
+                                existingTask.setTitle(taskUpdate.getTitle());
+                                existingTask.setDescription(taskUpdate.getDescription());
+                                existingTask.setStatus(status);
+                                existingTask.setUserId(taskUpdate.getUserId());
+                                return taskRepository.save(existingTask)
+                                        .map(taskMapper::toResponse);
+                    })
+                );
     }
 
     /**
@@ -123,7 +128,7 @@ public class TaskServiceImpl implements TaskService {
     public Mono<TaskResponse> partialUpdate(TaskUpdateRequest taskUpdate, Long id) {
         return taskRepository.findById(id)
                 .switchIfEmpty(Mono.error(new TaskNotFoundException("Task with id: " + id + " was not found.")))
-                .flatMap(existingTask -> updateTaskFields(existingTask, taskUpdate))
+                .flatMap(existingTask -> partialUpdateTaskFields(existingTask, taskUpdate))
                 .flatMap(taskRepository::save)
                 .map(taskMapper::toResponse);
     }
@@ -149,26 +154,36 @@ public class TaskServiceImpl implements TaskService {
      * @return TaskStatus enum
      * @throws InvalidTaskDataException if required fields are missing
      * @throws StatusNotFoundException  if status is invalid
+     * @throws UserNotFoundException  if the user does not exist
      */
-    private TaskStatus validateTaskUpdate(TaskUpdateRequest taskUpdate) {
-        if (taskUpdate.getTitle() == null || taskUpdate.getTitle().isBlank()) {
-            throw new InvalidTaskDataException("Title cannot be empty");
-        }
-        if (taskUpdate.getDescription() == null || taskUpdate.getDescription().isBlank()) {
-            throw new InvalidTaskDataException("Description cannot be empty");
-        }
-        if (taskUpdate.getStatus() == null || taskUpdate.getStatus().isBlank()) {
-            throw new InvalidTaskDataException("Status cannot be empty");
-        }
-
-        try {
-            return TaskStatus.valueOf(taskUpdate.getStatus().toUpperCase());
-        } catch (IllegalArgumentException e) {
-            throw new StatusNotFoundException(
-                    "Wrong status. Choose one from the list: NEW, IN_PROGRESS, COMPLETED, CANCELLED."
-            );
-        }
+private Mono<TaskStatus> updateTaskFields(TaskUpdateRequest taskUpdate) {
+    if (taskUpdate.getTitle() == null || taskUpdate.getTitle().isBlank()) {
+        return Mono.error(new InvalidTaskDataException("Title cannot be empty"));
     }
+    if (taskUpdate.getDescription() == null || taskUpdate.getDescription().isBlank()) {
+        return Mono.error(new InvalidTaskDataException("Description cannot be empty"));
+    }
+    if (taskUpdate.getStatus() == null || taskUpdate.getStatus().isBlank()) {
+        return Mono.error(new InvalidTaskDataException("Status cannot be empty"));
+    }
+
+    TaskStatus status;
+    try {
+        status = TaskStatus.valueOf(taskUpdate.getStatus().toUpperCase());
+    } catch (IllegalArgumentException e) {
+        return Mono.error(new StatusNotFoundException(
+                "Wrong status. Choose one from the list: NEW, IN_PROGRESS, COMPLETED, CANCELLED."
+        ));
+    }
+
+    if (taskUpdate.getUserId() != null) {
+        return userRepository.findById(taskUpdate.getUserId())
+                .switchIfEmpty(Mono.error(new UserNotFoundException("User with id: " + taskUpdate.getUserId() + " was not found.")))
+                .thenReturn(status);
+    }
+
+    return Mono.just(status);
+}
 
     /**
      * Helper method to apply partial updates to a Task entity.
@@ -177,7 +192,7 @@ public class TaskServiceImpl implements TaskService {
      * @param taskUpdate   the DTO containing fields to update
      * @return a Mono emitting the updated TaskResponse
      */
-    private Mono<Task> updateTaskFields(Task existingTask, TaskUpdateRequest taskUpdate) {
+    private Mono<Task> partialUpdateTaskFields(Task existingTask, TaskUpdateRequest taskUpdate) {
         if (taskUpdate.getTitle() != null && !taskUpdate.getTitle().isBlank()) {
             existingTask.setTitle(taskUpdate.getTitle());
         }
@@ -195,6 +210,15 @@ public class TaskServiceImpl implements TaskService {
                         "Wrong status. Choose one from the list: NEW, IN_PROGRESS, COMPLETED, CANCELLED."
                 ));
             }
+        }
+
+        if (taskUpdate.getUserId() != null) {
+            return userRepository.findById(taskUpdate.getUserId())
+                    .switchIfEmpty(Mono.error(new UserNotFoundException("User with id: " + taskUpdate.getUserId() + " was not found.")))
+                    .then(Mono.fromCallable(() -> {
+                        existingTask.setUserId(taskUpdate.getUserId());
+                        return existingTask;
+                    }));
         }
 
         return Mono.just(existingTask);
